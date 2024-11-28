@@ -9,7 +9,8 @@ import sys
 import pickle
 import fsspec
 import argparse
-from tqdm import tqdm
+from tqdm.auto import tqdm
+from tqdm import tqdm as tqdm_original
 
 import numpy as np
 
@@ -21,6 +22,7 @@ from torch.utils.data import Dataset
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
 from accelerate import Accelerator
+import wandb
 
 from scipy.sparse import load_npz
 from torch.utils.data import DataLoader
@@ -111,10 +113,25 @@ def main():
         help="specify the dataset for experiment")
     parser.add_argument("--batch_size", type=int, default=4, help="batch size for training")
     parser.add_argument("--gradient_accumulation_steps", type=int, default=4, help="number of steps to accumulate gradients")
+    parser.add_argument("--wandb_project", type=str, default="LLM4Rec", help="wandb project name")
+    parser.add_argument("--wandb_name", type=str, default=None, help="wandb run name")
     args = parser.parse_args()
     
     dataset = args.dataset
     lambda_V = float(args.lambda_V)
+    
+    # Initialize wandb
+    if accelerator.is_main_process:
+        wandb.init(
+            project=args.wandb_project,
+            name=args.wandb_name,
+            config={
+                "dataset": dataset,
+                "lambda_V": lambda_V,
+                "batch_size": args.batch_size,
+                "gradient_accumulation_steps": args.gradient_accumulation_steps,
+            }
+        )
     
     accelerator.print("-----Current Setting-----")
     accelerator.print(f"dataset: {dataset}")
@@ -305,6 +322,16 @@ def main():
     # Set gradient accumulation
     accelerator.gradient_accumulation_steps = args.gradient_accumulation_steps
 
+    # Log model architecture and hyperparameters to wandb
+    if accelerator.is_main_process:
+        wandb.config.update({
+            "learning_rate": learning_rate,
+            "num_pretrained_epochs": num_pretrained_epochs,
+            "num_epochs": num_epochs,
+            "model_config": config.to_dict(),
+            "optimizer": "Adam",
+        })
+
     '''
         Create a data sampler for distributed training
     '''
@@ -369,9 +396,9 @@ def main():
         review_total_loss = 0
         
         # Initialize tqdm progress bar
-        # progress_bar = tqdm(review_data_loader, desc=f"Epoch {epoch + 1}", 
-        #                     disable=not accelerator.is_local_main_process, ncols=80)
-        for input_ids_prompt, input_ids_main, attention_mask in review_data_loader:
+        progress_bar = tqdm(review_data_loader, desc=f"Epoch {epoch + 1}", 
+                            disable=not accelerator.is_local_main_process, ncols=80)
+        for input_ids_prompt, input_ids_main, attention_mask in progress_bar:
             review_optimizer.zero_grad()
 
             # Obtain the data
@@ -391,12 +418,19 @@ def main():
             review_optimizer.step()
 
             review_total_loss += review_loss.item()
-            # progress_bar.set_postfix({"Review Loss": review_loss.item()})
+            progress_bar.set_postfix({"Review Loss": review_loss.item()})
 
         thread_review_average_loss = torch.tensor([review_total_loss / len(review_data_loader)]).to(device)
         gathered_review_average_loss = accelerator.gather(thread_review_average_loss)
         review_average_loss = torch.mean(gathered_review_average_loss)
         accelerator.print(f"Epoch {epoch + 1} - Review Average Loss: {review_average_loss:.4f}")
+        
+        # Log metrics to wandb
+        if accelerator.is_main_process:
+            wandb.log({
+                "epoch": epoch + 1,
+                "review_loss": review_average_loss,
+            })
 
         # Check if the current loss is better than the best_loss
         if review_average_loss < review_best_loss:
@@ -431,9 +465,9 @@ def main():
         collaborative_total_loss = 0
         regularize_total_loss = 0
         
-        # progress_bar = tqdm(collaborative_data_loader, desc=f"Epoch {epoch + 1}",
-        #                     disable=not accelerator.is_local_main_process, ncols=100)
-        for input_ids_prompt, input_ids_main, attention_mask in collaborative_data_loader:
+        progress_bar = tqdm(collaborative_data_loader, desc=f"Epoch {epoch + 1}", 
+                            disable=not accelerator.is_local_main_process, ncols=100)
+        for input_ids_prompt, input_ids_main, attention_mask in progress_bar:
             collaborative_optimizer.zero_grad()
 
             input_ids_prompt = input_ids_prompt.to(device)
@@ -466,8 +500,8 @@ def main():
             collaborative_total_loss += collaborative_loss.item()
             regularize_total_loss += regularize_loss.item()
             
-            # progress_bar.set_postfix({"Collaborative Loss": collaborative_loss.item(),
-            #                           "Regularize Loss": regularize_loss.item()})
+            progress_bar.set_postfix({"Collaborative Loss": collaborative_loss.item(),
+                                      "Regularize Loss": regularize_loss.item()})
         
         # Gather the collaborative LM loss from different device
         thread_collaborative_average_loss = torch.tensor([collaborative_total_loss / len(collaborative_data_loader)]).to(device)
@@ -481,6 +515,15 @@ def main():
         regularize_average_loss = torch.mean(gathered_regularize_average_loss)
         accelerator.print(f"Epoch {epoch + 1} - Average Regularize Loss: {regularize_average_loss:.4f}")
         
+        # Log metrics to wandb
+        if accelerator.is_main_process:
+            wandb.log({
+                "epoch": epoch + 1,
+                "collaborative_loss": collaborative_average_loss,
+                "regularize_loss": regularize_average_loss,
+                "total_loss": collaborative_average_loss + lambda_V * regularize_average_loss,
+            })
+
         # Check if the current loss is better than the best_loss
         if collaborative_average_loss < collaborative_best_loss:
             collaborative_best_loss = collaborative_average_loss
@@ -510,9 +553,9 @@ def main():
         review_total_loss = 0
         regularize_total_loss = 0
         
-        # progress_bar = tqdm(review_data_loader, desc=f"Epoch {epoch + 1}", 
-        #                     disable=not accelerator.is_local_main_process, ncols=100)
-        for input_ids_prompt, input_ids_main, attention_mask in review_data_loader:
+        progress_bar = tqdm(review_data_loader, desc=f"Epoch {epoch + 1}", 
+                            disable=not accelerator.is_local_main_process, ncols=100)
+        for input_ids_prompt, input_ids_main, attention_mask in progress_bar:
             review_optimizer.zero_grad()
 
             input_ids_prompt = input_ids_prompt.to(device)
@@ -541,8 +584,8 @@ def main():
 
             review_total_loss += review_loss.item()
             regularize_total_loss += regularize_loss.item()
-            # progress_bar.set_postfix({"Review Loss": review_loss.item(),
-            #                           "Regularize Loss": regularize_loss.item()})
+            progress_bar.set_postfix({"Review Loss": review_loss.item(),
+                                      "Regularize Loss": regularize_loss.item()})
 
         # Gather the content LM loss from different device
         thread_review_average_loss = torch.tensor([review_total_loss / len(review_data_loader)]).to(device)
@@ -555,6 +598,15 @@ def main():
         gathered_regularize_average_loss = accelerator.gather(thread_regularize_average_loss)
         regularize_average_loss = torch.mean(gathered_regularize_average_loss)
         accelerator.print(f"Epoch {epoch + 1} - Average Regularize Loss: {regularize_average_loss:.4f}")
+
+        # Log metrics to wandb
+        if accelerator.is_main_process:
+            wandb.log({
+                "epoch": epoch + 1,
+                "review_loss": review_average_loss,
+                "regularize_loss": regularize_average_loss,
+                "total_loss": review_average_loss + lambda_V * regularize_average_loss,
+            })
 
         # Check if the current loss is better than the best_loss
         accelerator.wait_for_everyone()
