@@ -1,0 +1,5 @@
+model/
+data/
+.DS_Store
+tmp/
+__pycache__

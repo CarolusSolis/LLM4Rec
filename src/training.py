@@ -28,14 +28,14 @@ from transformers import GPT2Model, GPT2Config
 from transformers import GPT2Tokenizer
 
 sys.path.append("libs")
-from tokenizer import TokenizerWithUserItemIDTokensBatch
+from libs.tokenizer import TokenizerWithUserItemIDTokensBatch
 
-from data import CollaborativeGPTGeneratorBatch
-from data import UserItemContentGPTDatasetBatch
+from libs.data import CollaborativeGPTGeneratorBatch
+from libs.data import UserItemContentGPTDatasetBatch
 
-from model import GPT4RecommendationBaseModel
-from model import CollaborativeGPTwithItemLMHeadBatch
-from model import ContentGPTForUserItemWithLMHeadBatch
+from libs.model import GPT4RecommendationBaseModel
+from libs.model import CollaborativeGPTwithItemLMHeadBatch
+from libs.model import ContentGPTForUserItemWithLMHeadBatch
     
     
 def save_local(remote_path, local_path, remote_mode, local_mode):
@@ -60,8 +60,9 @@ def save_remote(local_path, remote_path, local_mode, remote_mode):
         f.write(content)
 
 
-gpt2_server_root = "hdfs://llm4rec"
-local_root = "tmp"
+# Change from HDFS to local paths
+gpt2_server_root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+local_root = os.path.join(gpt2_server_root, "tmp")
 if not os.path.exists(local_root):
     os.makedirs(local_root, exist_ok=True)
 
@@ -108,6 +109,8 @@ def main():
         help="specify the dataset for experiment")
     parser.add_argument("--lambda_V", type=str,
         help="specify the dataset for experiment")
+    parser.add_argument("--batch_size", type=int, default=4, help="batch size for training")
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=4, help="number of steps to accumulate gradients")
     args = parser.parse_args()
     
     dataset = args.dataset
@@ -116,6 +119,8 @@ def main():
     accelerator.print("-----Current Setting-----")
     accelerator.print(f"dataset: {dataset}")
     accelerator.print(f"lambda_V: {args.lambda_V}")
+    accelerator.print(f"batch_size: {args.batch_size}")
+    accelerator.print(f"gradient_accumulation_steps: {args.gradient_accumulation_steps}")
     
     # Define the number of GPUs to be used
     num_gpus = torch.cuda.device_count()
@@ -125,7 +130,7 @@ def main():
         Get the basic information of the dataset
     '''
     accelerator.print("-----Begin Obtaining Dataset Info-----")
-    data_root = os.path.join(gpt2_server_root, "dataset", dataset)
+    data_root = os.path.join(gpt2_server_root, "data", "original", dataset)
     meta_path = os.path.join(data_root, "meta.pkl")
 
     with fsspec.open(meta_path, "rb") as f:
@@ -229,6 +234,17 @@ def main():
 
 
     '''
+        Instantiate the GPT for recommendation collaborative model
+    '''
+    accelerator.print("-----Begin Instantiating the Collaborative GPT Model-----")
+    collaborative_base_model = GPT4RecommendationBaseModel(config, gpt2model)
+    collaborative_model = CollaborativeGPTwithItemLMHeadBatch(config, collaborative_base_model)
+    
+    accelerator.print("Success!")
+    accelerator.print("-----End Instantiating the Collaborative GPT Model-----\n")
+
+
+    '''
         Freeze the parameters of the pretrained GPT2 for content model
     '''
     for name, param in content_model.named_parameters():
@@ -283,10 +299,11 @@ def main():
     '''
     accelerator.print("-----Begin Setting Up the Training Details-----")
     learning_rate = 1e-3
-    batch_size = 20
     num_pretrained_epochs = 10
     num_epochs = 100
 
+    # Set gradient accumulation
+    accelerator.gradient_accumulation_steps = args.gradient_accumulation_steps
 
     '''
         Create a data sampler for distributed training
@@ -294,13 +311,15 @@ def main():
     accelerator.print("-----Begin Creating the DataLoader-----")
     # Create the review data loader with the custom collate_fn
     review_data_loader = DataLoader(review_data_gen, 
-                                    batch_size=batch_size, 
-                                    collate_fn=review_data_gen.collate_fn)
+                                    batch_size=args.batch_size, 
+                                    collate_fn=review_data_gen.collate_fn,
+                                    pin_memory=True)
 
     # Create the collaborative data loader with the custon collate_fn
     collaborative_data_loader = DataLoader(collaborative_data_gen, 
-                                           batch_size=batch_size, 
-                                           collate_fn=collaborative_data_gen.collate_fn)
+                                           batch_size=args.batch_size, 
+                                           collate_fn=collaborative_data_gen.collate_fn,
+                                           pin_memory=True)
     accelerator.print("-----End Creating the DataLoader-----\n")
 
     # Set the model to the training mode
@@ -333,11 +352,11 @@ def main():
     collaborative_best_loss = float('inf')
 
     # The place to save the content model weights
-    content_model_root = os.path.join(server_root, "model", dataset, "content")
+    content_model_root = os.path.join(gpt2_server_root, "model", dataset, "content")
     accelerator.print(f"Weights will be saved to {content_model_root}!")
     
     # The place to save the collaborative model weights
-    collaborative_model_root = os.path.join(server_root, "model", dataset, "collaborative")
+    collaborative_model_root = os.path.join(gpt2_server_root, "model", dataset, "collaborative")
     accelerator.print(f"Weights will be saved to {collaborative_model_root}!")
 
     accelerator.print("-----End Setting Up the Training Details-----\n")
