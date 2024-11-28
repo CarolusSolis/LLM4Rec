@@ -101,10 +101,6 @@ _config = {
 }
 
 def main():
-    # Define the accelerator
-    accelerator = Accelerator()
-    device = accelerator.device
-    
     # Parse the command line arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str,
@@ -116,6 +112,13 @@ def main():
     parser.add_argument("--wandb_project", type=str, default="LLM4Rec", help="wandb project name")
     parser.add_argument("--wandb_name", type=str, default=None, help="wandb run name")
     args = parser.parse_args()
+
+    # Define the accelerator
+    accelerator = Accelerator(
+        mixed_precision="fp16",
+        gradient_accumulation_steps=args.gradient_accumulation_steps
+    )
+    device = accelerator.device
     
     dataset = args.dataset
     lambda_V = float(args.lambda_V)
