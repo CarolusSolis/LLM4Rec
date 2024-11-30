@@ -380,7 +380,64 @@ The pretrained weights of GPT-2 used in this paper can be downloaded [[here]](ht
 as well as the original tokenizer that we modified by introducing user/item tokens.
 
 ## 6. How to Run the Codes
-see scripts/run.sh    
+
+### 6.1 Using the Run Script
+The easiest way to run the complete training pipeline is to use the provided script:
+```bash
+bash scripts/run.sh
+```
+
+The script will run training, finetuning, and prediction in sequence with default parameters.
+
+### 6.2 Running Individual Steps
+You can also run each step individually with custom parameters:
+
+#### Training
+```bash
+accelerate launch \
+    --multi_gpu \
+    --num_processes=4 \
+    --mixed_precision fp16 \
+    src/training.py \
+    --dataset beauty_100_users_100_items \
+    --lambda_V 1 \
+    --batch_size 4 \
+    --gradient_accumulation_steps 4 \
+    --wandb_project "LLM4Rec" \
+    --wandb_name "beauty_train"
+```
+
+#### Finetuning
+```bash
+accelerate launch \
+    --multi_gpu \
+    --num_processes=4 \
+    --mixed_precision fp16 \
+    src/finetuning.py \
+    --dataset beauty_100_users_100_items \
+    --lambda_V 1 \
+    --batch_size 4 \
+    --gradient_accumulation_steps 4 \
+    --wandb_project "LLM4Rec" \
+    --wandb_name "beauty_finetune"
+```
+
+#### Prediction
+```bash
+python src/predict.py \
+    --dataset beauty_100_users_100_items \
+    --lambda_V 1
+```
+
+### 6.3 Parameters
+- `--dataset`: Name of the dataset to use
+- `--lambda_V`: Regularization parameter
+- `--batch_size`: Batch size for training (default: 4)
+- `--gradient_accumulation_steps`: Number of steps to accumulate gradients (default: 4)
+- `--wandb_project`: Weights & Biases project name for logging
+- `--wandb_name`: Specific name for this training run
+
+Training progress and metrics will be logged to Weights & Biases for easy monitoring.
 
 ## 🌟 Citation
 If you find this work is helpful to your research, please consider citing our paper:
