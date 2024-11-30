@@ -1,5 +1,8 @@
 model/
-data/
+data/*
+!data/*.py
+!data/*.ipynb
+!data/*.txt
 .DS_Store
 tmp/
 __pycache__
