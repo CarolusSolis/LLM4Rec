@@ -150,7 +150,7 @@ def main():
         Get the basic information of the dataset
     '''
     accelerator.print("-----Begin Obtaining Dataset Info-----")
-    data_root = os.path.join(gpt2_server_root, "data", "original", dataset)
+    data_root = os.path.join(gpt2_server_root, "data", dataset)
     meta_path = os.path.join(data_root, "meta.pkl")
 
     with fsspec.open(meta_path, "rb") as f:

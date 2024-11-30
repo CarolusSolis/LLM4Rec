@@ -106,6 +106,16 @@ def filter_user_item_texts(data, top_users, top_items):
                     filtered_data.append(item)
     return filtered_data
 
+def create_meta_file(n_users, n_items, output_path):
+    meta = {
+        'num_users': n_users,
+        'num_items': n_items,
+        'dataset': 'beauty',
+        'version': f'small_{n_users}users_{n_items}items'
+    }
+    with open(os.path.join(output_path, 'meta.pkl'), 'wb') as f:
+        pickle.dump(meta, f)
+
 def main():
     # Create new directory structure
     create_directory_structure()
@@ -148,6 +158,11 @@ def main():
             filtered_data = filter_user_item_texts(data, top_users_set, top_items_set)
             with open(output_path, 'wb') as f:
                 pickle.dump(filtered_data, f)
+    
+    # Create meta.pkl
+    create_meta_file(N_USERS, N_ITEMS, TARGET_PATH)
+    
+    print("Dataset creation completed successfully!")
 
 if __name__ == "__main__":
     main()
