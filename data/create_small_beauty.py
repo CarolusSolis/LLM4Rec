@@ -119,7 +119,12 @@ def filter_matrix(matrix, user_indices, item_indices):
     # Zero out any items that aren't in the training set for val/test matrices
     return filtered
 
-def filter_pickle_file(input_path, output_path, indices, is_user=True):
+def create_id_mapping(ids):
+    """Create a mapping from original IDs to new sequential IDs (0 to N-1)."""
+    return {old_id: new_id for new_id, old_id in enumerate(sorted(ids))}
+
+def filter_pickle_file(input_path, output_path, indices, id_mapping=None, is_user=True):
+    """Filter pickle file and optionally remap IDs."""
     if not os.path.exists(input_path):
         return
     
@@ -129,11 +134,13 @@ def filter_pickle_file(input_path, output_path, indices, is_user=True):
     print(f"Processing {input_path}")
     print(f"Data type: {type(data)}")
     print(f"Data length: {len(data) if isinstance(data, (list, dict)) else 'N/A'}")
-    print(f"Sample indices: {list(indices)[:5]}")
-    print(f"Max index: {max(indices) if indices else 'N/A'}")
     
     if isinstance(data, dict):
-        filtered_data = {k: v for k, v in data.items() if k in indices}
+        if id_mapping:
+            # Remap keys using id_mapping
+            filtered_data = {id_mapping[k]: v for k, v in data.items() if k in indices}
+        else:
+            filtered_data = {k: v for k, v in data.items() if k in indices}
     elif isinstance(data, list):
         # Add bounds checking
         valid_indices = [i for i in indices if i < len(data)]
@@ -157,22 +164,30 @@ def extract_ids_from_text(text):
     except:
         return None, None
 
-def filter_user_item_texts(data, top_users, top_items):
+def filter_user_item_texts(data, top_users, top_items, user_mapping, item_mapping):
+    """Filter user-item texts and remap IDs to sequential indices."""
     filtered_data = []
     for item in data:
         if len(item) >= 2:  # Each item should be [formatted_text, content]
             user_id, item_id = extract_ids_from_text(item[0])
             if user_id is not None and item_id is not None:
                 if user_id in top_users and item_id in top_items:
-                    filtered_data.append(item)
+                    # Create new formatted text with remapped IDs
+                    new_text = f"user_{user_mapping[user_id]} wrote about item_{item_mapping[item_id]}:"
+                    filtered_data.append([new_text, item[1]])
     return filtered_data
 
-def create_meta_file(n_users, n_items, output_path):
+def create_meta_file(n_users, n_items, output_path, user_mapping, item_mapping):
+    """Create meta file with ID mappings."""
     meta = {
         'num_users': n_users,
         'num_items': n_items,
         'dataset': 'beauty',
-        'version': f'small_{n_users}users_{n_items}items'
+        'version': f'small_{n_users}users_{n_items}items',
+        'user_mapping': user_mapping,  # Maps original ID -> new ID
+        'item_mapping': item_mapping,  # Maps original ID -> new ID
+        'reverse_user_mapping': {v: k for k, v in user_mapping.items()},  # Maps new ID -> original ID
+        'reverse_item_mapping': {v: k for k, v in item_mapping.items()}   # Maps new ID -> original ID
     }
     with open(os.path.join(output_path, 'meta.pkl'), 'wb') as f:
         pickle.dump(meta, f)
@@ -209,6 +224,10 @@ def main():
     print(f"\nFinal dataset statistics:")
     print(f"Active users: {len(top_users)} out of {N_USERS} initial users")
     print(f"Items: {len(top_items)}")
+    
+    # Create ID mappings
+    user_mapping = create_id_mapping(top_users)
+    item_mapping = create_id_mapping(top_items)
     
     # Further filter matrices to only include active users
     filtered_train = filtered_train[active_mask]
@@ -247,7 +266,7 @@ def main():
     for filename in item_text_files:
         input_path = os.path.join(ORIGINAL_PATH, "item_texts", filename)
         output_path = os.path.join(TARGET_PATH, "item_texts", filename)
-        filter_pickle_file(input_path, output_path, top_items_set, is_user=False)
+        filter_pickle_file(input_path, output_path, top_items_set, id_mapping=item_mapping, is_user=False)
     
     # Filter user-item texts
     user_item_text_files = ["explain.pkl", "review.pkl"]
@@ -257,12 +276,12 @@ def main():
         if os.path.exists(input_path):
             with open(input_path, 'rb') as f:
                 data = pickle.load(f)
-            filtered_data = filter_user_item_texts(data, top_users_set, top_items_set)
+            filtered_data = filter_user_item_texts(data, top_users_set, top_items_set, user_mapping, item_mapping)
             with open(output_path, 'wb') as f:
                 pickle.dump(filtered_data, f)
     
     # Create meta.pkl
-    create_meta_file(len(top_users), N_ITEMS, TARGET_PATH)
+    create_meta_file(len(top_users), N_ITEMS, TARGET_PATH, user_mapping, item_mapping)
     
     print("Dataset creation completed successfully!")
 
