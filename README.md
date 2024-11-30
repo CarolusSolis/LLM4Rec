@@ -357,7 +357,31 @@ Define the finetuning stage of CLLM4Rec.
 ```src/predict.py```:     
 Evaluate the trained model and save the results.
 
-## 3. Environment
+## 3. Running the Model
+
+### 3.1. Training and Prediction
+The model training, finetuning, and prediction can be run using the provided `run.sh` script:
+
+```bash
+# Run the complete pipeline (training, finetuning, and prediction)
+bash scripts/run.sh
+```
+
+The script will:
+1. Train the base model
+2. Finetune the model for recommendation
+3. Run predictions
+
+You can also run prediction separately using:
+```bash
+python src/predict.py --dataset [DATASET_NAME] --lambda_V [LAMBDA_VALUE]
+```
+
+Required arguments:
+- `--dataset`: Specify the dataset for experiment (e.g., beauty_100_users_100_items)
+- `--lambda_V`: Specify the lambda value for prediction
+
+## 4. Environment
 
 The codes are written in Python 3.9
 - fsspec
@@ -370,18 +394,18 @@ The codes are written in Python 3.9
 
 Details see src/requirements.txt
 
-## 4. Datasets
+## 5. Datasets
 
 The datasets used in this paper can be accessed [[here]](https://drive.google.com/file/d/1G4t64tzAlXN0gq_0TJ5Wik8dsERz8pMJ/view?usp=drive_link).
 
-## 5. Pretrained Weights
+## 6. Pretrained Weights
 
 The pretrained weights of GPT-2 used in this paper can be downloaded [[here]](https://huggingface.co/openai-community/gpt2/tree/main),
 as well as the original tokenizer that we modified by introducing user/item tokens.
 
-## 6. How to Run the Codes
+## 7. How to Run the Codes
 
-### 6.1 Using the Run Script
+### 7.1 Using the Run Script
 The easiest way to run the complete training pipeline is to use the provided script:
 ```bash
 bash scripts/run.sh
@@ -389,7 +413,7 @@ bash scripts/run.sh
 
 The script will run training, finetuning, and prediction in sequence with default parameters.
 
-### 6.2 Running Individual Steps
+### 7.2 Running Individual Steps
 You can also run each step individually with custom parameters:
 
 #### Training
@@ -429,7 +453,7 @@ python src/predict.py \
     --lambda_V 1
 ```
 
-### 6.3 Parameters
+### 7.3 Parameters
 - `--dataset`: Name of the dataset to use
 - `--lambda_V`: Regularization parameter
 - `--batch_size`: Batch size for training (default: 4)
