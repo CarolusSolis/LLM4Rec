@@ -15,6 +15,32 @@ def load_and_check_matrices(path):
             print(f"Shape: {matrix.shape}")
             print(f"Number of non-zero elements: {matrix.nnz}")
             print(f"Density: {matrix.nnz / (matrix.shape[0] * matrix.shape[1]):.4%}")
+            
+            # Print unique items in each matrix
+            unique_items = set(matrix.nonzero()[1])
+            print(f"Number of unique items: {len(unique_items)}")
+            print(f"Item ID range: [{min(unique_items)}, {max(unique_items)}]")
+    
+    # Check for item consistency across splits
+    if len(matrices) > 1:
+        train_items = set(matrices["train_matrix.npz"].nonzero()[1])
+        print(f"\nDetailed item overlap analysis:")
+        print(f"Training set unique items: {len(train_items)}")
+        
+        for name, matrix in matrices.items():
+            if name != "train_matrix.npz":
+                split_items = set(matrix.nonzero()[1])
+                items_not_in_train = split_items - train_items
+                if items_not_in_train:
+                    print(f"\n{name}:")
+                    print(f"- Total unique items: {len(split_items)}")
+                    print(f"- Items not in training set: {len(items_not_in_train)}")
+                    print(f"- Missing item IDs: {sorted(items_not_in_train)}")
+                else:
+                    print(f"\n{name}:")
+                    print(f"- Total unique items: {len(split_items)}")
+                    print(f"- All items present in training set ")
+    
     return matrices
 
 def check_item_texts(path):
