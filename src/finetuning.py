@@ -23,6 +23,7 @@ from torch.nn import functional as F
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
 from accelerate import Accelerator
+import wandb
 
 from scipy.sparse import load_npz
 from torch.utils.data import DataLoader
@@ -30,17 +31,17 @@ from transformers import GPT2Model, GPT2Config
 from transformers import GPT2Tokenizer
 
 sys.path.append("libs")
-from tokenizer import TokenizerWithUserItemIDTokensBatch
+from libs.tokenizer import TokenizerWithUserItemIDTokensBatch
 
-from data import UserItemContentGPTDatasetBatch
-from data import RecommendationGPTTrainGeneratorBatch
-from data import RecommendationGPTTestGeneratorBatch
+from libs.data import UserItemContentGPTDatasetBatch
+from libs.data import RecommendationGPTTrainGeneratorBatch
+from libs.data import RecommendationGPTTestGeneratorBatch
 
-from model import GPT4RecommendationBaseModel
-from model import ContentGPTForUserItemWithLMHeadBatch
-from model import CollaborativeGPTwithItemRecommendHead
+from libs.model import GPT4RecommendationBaseModel
+from libs.model import ContentGPTForUserItemWithLMHeadBatch
+from libs.model import CollaborativeGPTwithItemRecommendHead
 
-from util import Recall_at_k, NDCG_at_k
+from libs.util import Recall_at_k, NDCG_at_k
     
 def save_local(remote_path, local_path, remote_mode, local_mode):
     '''
@@ -63,8 +64,8 @@ def save_remote(local_path, remote_path, local_mode, remote_mode):
     with fsspec.open(remote_path, remote_mode) as f:
         f.write(content)
 
-server_root = "hdfs://llm4rec"
-local_root = "tmp"
+server_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # Points to LLM4Rec root
+local_root = os.path.join(server_root, "tmp")
 if not os.path.exists(local_root):
     os.makedirs(local_root, exist_ok=True)
 
@@ -101,34 +102,52 @@ _config = {
 }
 
 def main():
-    # Define the accelerator
-    accelerator = Accelerator()
-    device = accelerator.device
-    
     # Parse the command line arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str,
         help="specify the dataset for experiment")
     parser.add_argument("--lambda_V", type=str,
         help="specify the dataset for experiment")
+    parser.add_argument("--batch_size", type=int, default=4, help="batch size for training")
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=4, help="number of steps to accumulate gradients")
+    parser.add_argument("--wandb_project", type=str, default="LLM4Rec", help="wandb project name")
+    parser.add_argument("--wandb_name", type=str, default=None, help="wandb run name")
     args = parser.parse_args()
+
+    # Define the accelerator
+    accelerator = Accelerator(
+        mixed_precision="fp16",
+        gradient_accumulation_steps=args.gradient_accumulation_steps
+    )
+    device = accelerator.device
     
     dataset = args.dataset
     lambda_V = float(args.lambda_V)
     
+    # Initialize wandb
+    if accelerator.is_main_process:
+        wandb.init(
+            project=args.wandb_project,
+            name=args.wandb_name,
+            config={
+                "dataset": dataset,
+                "lambda_V": lambda_V,
+                "batch_size": args.batch_size,
+                "gradient_accumulation_steps": args.gradient_accumulation_steps,
+            }
+        )
+    
     accelerator.print("-----Current Setting-----")
     accelerator.print(f"dataset: {dataset}")
     accelerator.print(f"lambda_V: {args.lambda_V}")
-    
-    # Define the number of GPUs to be used
-    num_gpus = torch.cuda.device_count()
-    accelerator.print(f"num_gpus: {num_gpus}")
+    accelerator.print(f"batch_size: {args.batch_size}")
+    accelerator.print(f"gradient_accumulation_steps: {args.gradient_accumulation_steps}")
     
     '''
         Get the basic information of the dataset
     '''
     accelerator.print("-----Begin Obtaining Dataset Info-----")
-    data_root = os.path.join(server_root, "dataset", dataset)
+    data_root = os.path.join(server_root, "data", dataset)
     meta_path = os.path.join(data_root, "meta.pkl")
 
     with fsspec.open(meta_path, "rb") as f:
@@ -314,7 +333,7 @@ def main():
     '''
     accelerator.print("-----Begin Setting Up the Training Details-----")
     learning_rate = 1e-4
-    batch_size = 20
+    batch_size = args.batch_size
     val_batch_size = 256
     num_epochs = 150
 
@@ -441,6 +460,13 @@ def main():
         regularize_average_loss = torch.mean(gathered_regularize_average_loss)
         accelerator.print(f"Epoch {epoch + 1} - Average Regularize Loss: {regularize_average_loss:.4f}")
 
+        if accelerator.is_main_process:
+            wandb.log({
+                "train/rec_loss": train_rec_loss.item(),
+                "train/regularize_loss": regularize_average_loss.item(),
+                "epoch": epoch + 1
+            })
+
         # Set the model to evaluation mode
         rec_model.eval()  
         val_rec_loss = 0
@@ -513,6 +539,16 @@ def main():
         accelerator.print(f"Cur Recall@40: {cur_recall_40:.4f} / Best Recall@40: {best_recall_40:.4f}")
         accelerator.print(f"Cur NDCG@100: {cur_NDCG_100:.4f} / Best NDCG@100: {best_NDCG_100:.4f}")    
     
+        if accelerator.is_main_process:
+            wandb.log({
+                "val/rec_loss": val_rec_loss,
+                "val/recall@20": cur_recall_20,
+                "val/recall@40": cur_recall_40,
+                "val/ndcg@100": cur_NDCG_100,
+                "val/metrics_sum": cur_sum,
+                "epoch": epoch + 1
+            })
+
         review_total_loss = 0
         regularize_total_loss = 0
         
@@ -562,6 +598,13 @@ def main():
         gathered_regularize_average_loss = accelerator.gather(thread_regularize_average_loss)
         regularize_average_loss = torch.mean(gathered_regularize_average_loss)
         accelerator.print(f"Epoch {epoch + 1} - Average Regularize Loss: {regularize_average_loss:.4f}")
+
+        if accelerator.is_main_process:
+            wandb.log({
+                "review/loss": review_average_loss.item(),
+                "review/regularize_loss": regularize_average_loss.item(),
+                "epoch": epoch + 1
+            })
 
         # Check if the current loss is better than the best_loss
         accelerator.wait_for_everyone()
