@@ -154,6 +154,48 @@ def filter_pickle_file(input_path, output_path, indices, id_mapping=None, is_use
     with open(output_path, 'wb') as f:
         pickle.dump(filtered_data, f)
 
+def filter_item_text_file(input_path, output_path, top_items, item_mapping):
+    """Filter item text files that have format ['The X of item_Y is/are:', ' content']."""
+    if not os.path.exists(input_path):
+        return
+    
+    with open(input_path, 'rb') as f:
+        data = pickle.load(f)
+    
+    print(f"Processing {input_path}")
+    filtered_data = []
+    
+    for entry in data:
+        # Extract item ID from text like 'The brand of item_X is:' or 'The categories of item_X are:'
+        desc_text, content = entry
+        try:
+            # Split by 'item_' first
+            after_item = desc_text.split('item_')[1]
+            # Find the item ID by splitting at either 'is:' or 'are:'
+            if ' is:' in after_item:
+                item_str = after_item.split(' is:')[0]
+                suffix = ' is:'
+            elif ' are:' in after_item:
+                item_str = after_item.split(' are:')[0]
+                suffix = ' are:'
+            else:
+                raise ValueError("Neither 'is:' nor 'are:' found in text")
+                
+            item_id = int(item_str)
+            
+            if item_id in top_items:
+                # Get the prefix (e.g., 'The brand of')
+                prefix = desc_text.split('item_')[0]
+                # Create new description with remapped ID
+                new_desc = f"{prefix}item_{item_mapping[item_id]}{suffix}"
+                filtered_data.append([new_desc, content])
+        except (IndexError, ValueError) as e:
+            print(f"Warning: Could not process entry {entry}: {e}")
+            continue
+    
+    with open(output_path, 'wb') as f:
+        pickle.dump(filtered_data, f)
+
 def extract_ids_from_text(text):
     """Extract user_id and item_id from formatted text strings like 'user_X explains...' or 'user_X wrote...'"""
     parts = text.split()
@@ -234,24 +276,6 @@ def main():
     filtered_val = filtered_val[active_mask]
     filtered_test = filtered_test[active_mask]
     
-    # Verify item overlap
-    train_items = set(filtered_train.nonzero()[1])
-    val_items = set(filtered_val.nonzero()[1])
-    test_items = set(filtered_test.nonzero()[1])
-    
-    val_missing = val_items - train_items
-    test_missing = test_items - train_items
-    
-    if val_missing:
-        print(f"\nWARNING: Found {len(val_missing)} items in validation set that aren't in training set!")
-        filtered_val.data[np.isin(filtered_val.nonzero()[1], list(val_missing))] = 0
-        filtered_val.eliminate_zeros()
-    
-    if test_missing:
-        print(f"\nWARNING: Found {len(test_missing)} items in test set that aren't in training set!")
-        filtered_test.data[np.isin(filtered_test.nonzero()[1], list(test_missing))] = 0
-        filtered_test.eliminate_zeros()
-    
     # Save filtered matrices
     sp.save_npz(os.path.join(TARGET_PATH, "train_matrix.npz"), filtered_train)
     sp.save_npz(os.path.join(TARGET_PATH, "val_matrix.npz"), filtered_val)
@@ -266,8 +290,8 @@ def main():
     for filename in item_text_files:
         input_path = os.path.join(ORIGINAL_PATH, "item_texts", filename)
         output_path = os.path.join(TARGET_PATH, "item_texts", filename)
-        filter_pickle_file(input_path, output_path, top_items_set, id_mapping=item_mapping, is_user=False)
-    
+        filter_item_text_file(input_path, output_path, top_items_set, item_mapping)
+
     # Filter user-item texts
     user_item_text_files = ["explain.pkl", "review.pkl"]
     for filename in user_item_text_files:
