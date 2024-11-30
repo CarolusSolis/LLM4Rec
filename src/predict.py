@@ -30,16 +30,16 @@ from transformers import GPT2Model, GPT2Config
 from transformers import GPT2Tokenizer
 
 sys.path.append("libs")
-from tokenizer import TokenizerWithUserItemIDTokensBatch
+from libs.tokenizer import TokenizerWithUserItemIDTokensBatch
 
-from data import UserItemContentGPTDatasetBatch
-from data import RecommendationGPTTrainGeneratorBatch
-from data import RecommendationGPTTestGeneratorBatch
+from libs.data import UserItemContentGPTDatasetBatch
+from libs.data import RecommendationGPTTrainGeneratorBatch
+from libs.data import RecommendationGPTTestGeneratorBatch
 
-from model import GPT4RecommendationBaseModel
-from model import ContentGPTForUserItemWithLMHeadBatch
-from model import CollaborativeGPTwithItemRecommendHead
-from util import Recall_at_k, NDCG_at_k
+from libs.model import GPT4RecommendationBaseModel
+from libs.model import ContentGPTForUserItemWithLMHeadBatch
+from libs.model import CollaborativeGPTwithItemRecommendHead
+from libs.util import Recall_at_k, NDCG_at_k
     
 def save_local(remote_path, local_path, remote_mode, local_mode):
     '''
