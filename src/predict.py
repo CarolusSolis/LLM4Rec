@@ -22,6 +22,8 @@ from torch.utils.data import Dataset
 from torch.nn import functional as F
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
+from accelerate import Accelerator
+
 from scipy.sparse import load_npz
 from torch.utils.data import DataLoader
 from transformers import GPT2Model, GPT2Config
@@ -60,8 +62,10 @@ def save_remote(local_path, remote_path, local_mode, remote_mode):
     with fsspec.open(remote_path, remote_mode) as f:
         f.write(content)
 
-server_root = "hdfs://llm4rec"
-local_root = "tmp"
+
+# Change from HDFS to local paths
+server_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # Points to LLM4Rec root
+local_root = os.path.join(server_root, "tmp")
 if not os.path.exists(local_root):
     os.makedirs(local_root, exist_ok=True)
 
@@ -98,6 +102,10 @@ _config = {
 }
 
 def main():
+    # Define the accelerator
+    accelerator = Accelerator()
+    device = accelerator.device
+    
     # Parse the command line arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str,
@@ -108,22 +116,15 @@ def main():
     
     dataset = args.dataset
     
-    print("-----Current Setting-----")
-    print(f"dataset: {dataset}")
-    print(f"lambda_V: {args.lambda_V}")
-    
-    # Define the device
-    device = "cuda"
-    
-    # Define the number of GPUs to be used
-    num_gpus = torch.cuda.device_count()
-    print(f"num_gpus: {num_gpus}")
+    accelerator.print("-----Current Setting-----")
+    accelerator.print(f"dataset: {dataset}")
+    accelerator.print(f"lambda_V: {args.lambda_V}")
     
     '''
         Get the basic information of the dataset
     '''
-    print("-----Begin Obtaining Dataset Info-----")
-    data_root = os.path.join(server_root, "dataset", dataset)
+    accelerator.print("-----Begin Obtaining Dataset Info-----")
+    data_root = os.path.join(server_root, "data", dataset)
     meta_path = os.path.join(data_root, "meta.pkl")
 
     with fsspec.open(meta_path, "rb") as f:
@@ -131,17 +132,17 @@ def main():
         
     num_users = meta_data["num_users"]
     num_items = meta_data["num_items"]
-    print(f"num_users: {num_users}")
-    print(f"num_items: {num_items}")
-    print("-----End Obtaining Dataset Info-----\n")
+    accelerator.print(f"num_users: {num_users}")
+    accelerator.print(f"num_items: {num_items}")
+    accelerator.print("-----End Obtaining Dataset Info-----\n")
 
 
     '''
         Obtain the tokenizer with user/item tokens
     '''
-    print("-----Begin Obtaining the Tokenizer-----")
+    accelerator.print("-----Begin Obtaining the Tokenizer-----")
     tokenizer_root = os.path.join(server_root, "model", "pretrained", "tokenizer")
-    print(f"Loading pretrained tokenizer from {tokenizer_root}...")
+    accelerator.print(f"Loading pretrained tokenizer from {tokenizer_root}...")
     remote_vocab_file = os.path.join(tokenizer_root, "vocab_file.json")
     remote_merges_file = os.path.join(tokenizer_root, "merges.txt")
     vocab_file = os.path.join(local_root, "vocab_file.json")
@@ -154,17 +155,17 @@ def main():
                                                    merges_file,
                                                    num_users,
                                                    num_items)
-    print("Success!")
-    print("-----End Obtaining the Tokenizer-----\n")
+    accelerator.print("Success!")
+    accelerator.print("-----End Obtaining the Tokenizer-----\n")
 
 
     '''
         Obtain the testing data generator
     '''
-    print("-----Begin Obtaining the Collaborative Data Generator-----")
+    accelerator.print("-----Begin Obtaining the Collaborative Data Generator-----")
     remote_train_mat_path = os.path.join(data_root, "train_matrix.npz")
     local_train_mat_path = os.path.join(local_root, "train_matrix.npz")
-    print(f"Loading data from {remote_train_mat_path}...")
+    accelerator.print(f"Loading data from {remote_train_mat_path}...")
     save_local(remote_train_mat_path, local_train_mat_path, "rb", "wb")
     
     remote_test_mat_path = os.path.join(data_root, "test_matrix.npz")
@@ -176,40 +177,40 @@ def main():
     test_mat = load_npz(local_test_mat_path)
     test_data_gen = RecommendationGPTTestGeneratorBatch(tokenizer, train_mat, test_mat)
 
-    print("Success!")
-    print("-----End Obtaining the Collaborative Data Generator-----\n")
+    accelerator.print("Success!")
+    accelerator.print("-----End Obtaining the Collaborative Data Generator-----\n")
 
 
     '''
         Extend the config of the original GPT model
     '''
-    print("-----Begin Setting Up the Config-----")
+    accelerator.print("-----Begin Setting Up the Config-----")
     config = GPT2Config(**_config)
     config.num_users = num_users
     config.num_items = num_items
-    print("Success!")
-    print("-----End Setting Up the Config-----\n")
+    accelerator.print("Success!")
+    accelerator.print("-----End Setting Up the Config-----\n")
 
 
     '''
         Instantiate the pretrained GPT2 model
     '''
-    print("-----Begin Instantiating the Pretrained GPT Model-----")
+    accelerator.print("-----Begin Instantiating the Pretrained GPT Model-----")
     gpt2model = GPT2Model(config)
     pretrained_root = os.path.join(server_root, "model", "pretrained")
-    print(f"Loading pretrained weights from {pretrained_root}...")
+    accelerator.print(f"Loading pretrained weights from {pretrained_root}...")
     remote_pretrained_weights_path = os.path.join(pretrained_root, "gpt2", "pytorch_model.bin")
     local_pretrained_weights_path = os.path.join(local_root, "gpt2", "pytorch_model.bin")
     save_local(remote_pretrained_weights_path, local_pretrained_weights_path, "rb", "wb")
     gpt2model.load_state_dict(torch.load(local_pretrained_weights_path), strict=False)
-    print("Success!")
-    print("-----End Instantiating the Pretrained GPT Model-----\n")
+    accelerator.print("Success!")
+    accelerator.print("-----End Instantiating the Pretrained GPT Model-----\n")
 
 
     '''
         Instantiate the GPT for recommendation content model
     '''
-    print("-----Begin Instantiating the Content GPT Model-----")
+    accelerator.print("-----Begin Instantiating the Content GPT Model-----")
     base_model = GPT4RecommendationBaseModel(config, gpt2model)
 
     pretrained_root = os.path.join(server_root, "model", dataset, "rec")
@@ -223,20 +224,20 @@ def main():
 
     base_model.user_embeddings.load_state_dict(
         torch.load(local_pretrained_user_emb_path, map_location=device))
-    print("Load pretrained user embeddings: Success!")
+    accelerator.print("Load pretrained user embeddings: Success!")
     base_model.item_embeddings.load_state_dict(
         torch.load(local_pretrained_item_emb_path, map_location=device))
-    print("Load pretrained item embeddings: Success!")
+    accelerator.print("Load pretrained item embeddings: Success!")
 
     rec_model = CollaborativeGPTwithItemRecommendHead(config, base_model)
-    print("Success!")
-    print("-----End Instantiating the Content GPT Model-----\n")
+    accelerator.print("Success!")
+    accelerator.print("-----End Instantiating the Content GPT Model-----\n")
 
     
     '''
         Create a data sampler for distributed training
     '''
-    print("-----Begin Creating the DataLoader-----")
+    accelerator.print("-----Begin Creating the DataLoader-----")
 
     # Create the testing data loader
     # Note that we only do the testing in the main process!
@@ -244,7 +245,7 @@ def main():
     test_data_loader = DataLoader(test_data_gen, 
                                   batch_size=batch_size, 
                                   collate_fn=test_data_gen.collate_fn)
-    print("-----End Creating the DataLoader-----\n")
+    accelerator.print("-----End Creating the DataLoader-----\n")
 
     # Set the model to the training mode
     rec_model.to(device)
@@ -283,10 +284,10 @@ def main():
     cur_recall_40 /= len(test_data_gen)
     cur_NDCG_100 /= len(test_data_gen)
     
-    print(f"Final Testing Results:")
-    print(f"Recall@20: {cur_recall_20:.4f}")
-    print(f"Recall@40: {cur_recall_40:.4f}")
-    print(f"NDCG@100: {cur_NDCG_100:.4f}")
+    accelerator.print(f"Final Testing Results:")
+    accelerator.print(f"Recall@20: {cur_recall_20:.4f}")
+    accelerator.print(f"Recall@40: {cur_recall_40:.4f}")
+    accelerator.print(f"NDCG@100: {cur_NDCG_100:.4f}")
     
     results_path = os.path.join(pretrained_root, f"results_{args.lambda_V}.txt")
     with fsspec.open(results_path, "w") as f:
