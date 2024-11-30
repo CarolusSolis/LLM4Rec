@@ -25,7 +25,6 @@ Usage:
     python create_small_beauty.py
 
 The script will create a new directory 'beauty_N_users_M_items' containing the reduced dataset.
-Current settings: N=100 users, M=100 items.
 
 Note:
     - Users are selected based on their interaction count in the training set
@@ -41,9 +40,9 @@ import pickle
 
 # Constants
 N_USERS = 100
-N_ITEMS = 100
+N_ITEMS = 500
 ORIGINAL_PATH = "original/beauty"
-TARGET_PATH = "beauty_100_users_100_items"
+TARGET_PATH = f"beauty_{N_USERS}_users_{N_ITEMS}_items"
 
 def load_sparse_matrix(filepath):
     return sp.load_npz(filepath)
@@ -53,20 +52,72 @@ def get_most_active_users(train_matrix, n_users):
     top_users = np.argsort(user_interactions)[-n_users:]
     return top_users
 
-def get_most_interacted_items(train_matrix, user_indices, n_items):
-    item_interactions = np.array(train_matrix[user_indices].sum(axis=0)).flatten()
-    top_items = np.argsort(item_interactions)[-n_items:]
-    return top_items
+def get_valid_item_indices(train_matrix, val_matrix, test_matrix, user_indices, n_items, text_files_path):
+    """Get most interacted items across all splits that exist in all text files."""
+    # Get interactions from all matrices for selected users
+    train_interactions = np.array(train_matrix[user_indices].sum(axis=0)).flatten()
+    val_interactions = np.array(val_matrix[user_indices].sum(axis=0)).flatten()
+    test_interactions = np.array(test_matrix[user_indices].sum(axis=0)).flatten()
+    
+    # Get total interactions for ranking
+    total_interactions = train_interactions + val_interactions + test_interactions
+    
+    # Get the length of each text file
+    text_files = ["brand.pkl", "categories.pkl", "description.pkl", "title.pkl"]
+    min_length = float('inf')
+    for filename in text_files:
+        path = os.path.join(text_files_path, filename)
+        if os.path.exists(path):
+            with open(path, 'rb') as f:
+                data = pickle.load(f)
+                min_length = min(min_length, len(data))
+    
+    # Get all valid items (within bounds and has training interaction)
+    all_items = np.arange(min(min_length, train_matrix.shape[1]))
+    valid_mask = train_interactions[all_items] > 0
+    valid_items = all_items[valid_mask]
+    
+    # Sort by total interactions
+    sorted_indices = np.argsort(total_interactions[valid_items])[::-1]
+    selected_items = valid_items[sorted_indices][:n_items]
+    
+    # Print statistics about item selection
+    print("\nItem selection statistics:")
+    print(f"Items with train interactions: {np.sum(train_interactions[selected_items] > 0)}")
+    print(f"Items with val interactions: {np.sum(val_interactions[selected_items] > 0)}")
+    print(f"Items with test interactions: {np.sum(test_interactions[selected_items] > 0)}")
+    print(f"Items with interactions in all splits: {np.sum((train_interactions[selected_items] > 0) & (val_interactions[selected_items] > 0) & (test_interactions[selected_items] > 0))}")
+    
+    # Ensure all selected items have training interactions
+    assert np.all(train_interactions[selected_items] > 0), "Some selected items have no training interactions!"
+    
+    return selected_items
+
+def get_active_users(train_matrix, val_matrix, test_matrix, user_indices):
+    """Filter out users who have no interactions in any of the matrices."""
+    # Get interactions for each matrix
+    train_interactions = np.array(train_matrix.sum(axis=1)).flatten()
+    val_interactions = np.array(val_matrix.sum(axis=1)).flatten()
+    test_interactions = np.array(test_matrix.sum(axis=1)).flatten()
+    
+    # User must have at least one interaction in each matrix
+    active_mask = (train_interactions > 0) & (val_interactions > 0) & (test_interactions > 0)
+    active_users = user_indices[active_mask]
+    
+    # Print detailed statistics
+    print(f"\nUser interaction statistics:")
+    print(f"Users with no training interactions: {np.sum(train_interactions == 0)}")
+    print(f"Users with no validation interactions: {np.sum(val_interactions == 0)}")
+    print(f"Users with no test interactions: {np.sum(test_interactions == 0)}")
+    print(f"Users with interactions in all splits: {np.sum(active_mask)}")
+    
+    return active_users, active_mask
 
 def filter_matrix(matrix, user_indices, item_indices):
-    return matrix[user_indices][:, item_indices]
-
-def create_directory_structure():
-    if os.path.exists(TARGET_PATH):
-        shutil.rmtree(TARGET_PATH)
-    os.makedirs(TARGET_PATH)
-    os.makedirs(os.path.join(TARGET_PATH, "item_texts"))
-    os.makedirs(os.path.join(TARGET_PATH, "user_item_texts"))
+    """Filter matrix to only include specified users and items."""
+    filtered = matrix[user_indices][:, item_indices]
+    # Zero out any items that aren't in the training set for val/test matrices
+    return filtered
 
 def filter_pickle_file(input_path, output_path, indices, is_user=True):
     if not os.path.exists(input_path):
@@ -75,10 +126,20 @@ def filter_pickle_file(input_path, output_path, indices, is_user=True):
     with open(input_path, 'rb') as f:
         data = pickle.load(f)
     
+    print(f"Processing {input_path}")
+    print(f"Data type: {type(data)}")
+    print(f"Data length: {len(data) if isinstance(data, (list, dict)) else 'N/A'}")
+    print(f"Sample indices: {list(indices)[:5]}")
+    print(f"Max index: {max(indices) if indices else 'N/A'}")
+    
     if isinstance(data, dict):
         filtered_data = {k: v for k, v in data.items() if k in indices}
     elif isinstance(data, list):
-        filtered_data = [data[i] for i in indices]
+        # Add bounds checking
+        valid_indices = [i for i in indices if i < len(data)]
+        if len(valid_indices) < len(indices):
+            print(f"Warning: {len(indices) - len(valid_indices)} indices were out of range")
+        filtered_data = [data[i] for i in valid_indices]
     else:
         print(f"Unsupported data type for {input_path}")
         return
@@ -116,6 +177,13 @@ def create_meta_file(n_users, n_items, output_path):
     with open(os.path.join(output_path, 'meta.pkl'), 'wb') as f:
         pickle.dump(meta, f)
 
+def create_directory_structure():
+    if os.path.exists(TARGET_PATH):
+        shutil.rmtree(TARGET_PATH)
+    os.makedirs(TARGET_PATH)
+    os.makedirs(os.path.join(TARGET_PATH, "item_texts"))
+    os.makedirs(os.path.join(TARGET_PATH, "user_item_texts"))
+
 def main():
     # Create new directory structure
     create_directory_structure()
@@ -125,20 +193,54 @@ def main():
     val_matrix = load_sparse_matrix(os.path.join(ORIGINAL_PATH, "val_matrix.npz"))
     test_matrix = load_sparse_matrix(os.path.join(ORIGINAL_PATH, "test_matrix.npz"))
     
-    # Get top users and items
-    top_users = get_most_active_users(train_matrix, N_USERS)
-    top_items = get_most_interacted_items(train_matrix, top_users, N_ITEMS)
+    # Get initial top users and items
+    initial_top_users = get_most_active_users(train_matrix, N_USERS)
+    top_items = get_valid_item_indices(train_matrix, val_matrix, test_matrix, 
+                                     initial_top_users, N_ITEMS, 
+                                     os.path.join(ORIGINAL_PATH, "item_texts"))
+    
+    # Filter matrices first
+    filtered_train = filter_matrix(train_matrix, initial_top_users, top_items)
+    filtered_val = filter_matrix(val_matrix, initial_top_users, top_items)
+    filtered_test = filter_matrix(test_matrix, initial_top_users, top_items)
+    
+    # Get active users after filtering (must have interactions in all splits)
+    top_users, active_mask = get_active_users(filtered_train, filtered_val, filtered_test, initial_top_users)
+    print(f"\nFinal dataset statistics:")
+    print(f"Active users: {len(top_users)} out of {N_USERS} initial users")
+    print(f"Items: {len(top_items)}")
+    
+    # Further filter matrices to only include active users
+    filtered_train = filtered_train[active_mask]
+    filtered_val = filtered_val[active_mask]
+    filtered_test = filtered_test[active_mask]
+    
+    # Verify item overlap
+    train_items = set(filtered_train.nonzero()[1])
+    val_items = set(filtered_val.nonzero()[1])
+    test_items = set(filtered_test.nonzero()[1])
+    
+    val_missing = val_items - train_items
+    test_missing = test_items - train_items
+    
+    if val_missing:
+        print(f"\nWARNING: Found {len(val_missing)} items in validation set that aren't in training set!")
+        filtered_val.data[np.isin(filtered_val.nonzero()[1], list(val_missing))] = 0
+        filtered_val.eliminate_zeros()
+    
+    if test_missing:
+        print(f"\nWARNING: Found {len(test_missing)} items in test set that aren't in training set!")
+        filtered_test.data[np.isin(filtered_test.nonzero()[1], list(test_missing))] = 0
+        filtered_test.eliminate_zeros()
+    
+    # Save filtered matrices
+    sp.save_npz(os.path.join(TARGET_PATH, "train_matrix.npz"), filtered_train)
+    sp.save_npz(os.path.join(TARGET_PATH, "val_matrix.npz"), filtered_val)
+    sp.save_npz(os.path.join(TARGET_PATH, "test_matrix.npz"), filtered_test)
     
     # Convert to sets for faster lookup
     top_users_set = set(top_users)
     top_items_set = set(top_items)
-    
-    # Filter and save matrices
-    for name, matrix in [("train_matrix", train_matrix), 
-                        ("val_matrix", val_matrix), 
-                        ("test_matrix", test_matrix)]:
-        filtered = filter_matrix(matrix, top_users, top_items)
-        sp.save_npz(os.path.join(TARGET_PATH, name + ".npz"), filtered)
     
     # Filter item texts
     item_text_files = ["brand.pkl", "categories.pkl", "description.pkl", "title.pkl"]
@@ -160,7 +262,7 @@ def main():
                 pickle.dump(filtered_data, f)
     
     # Create meta.pkl
-    create_meta_file(N_USERS, N_ITEMS, TARGET_PATH)
+    create_meta_file(len(top_users), N_ITEMS, TARGET_PATH)
     
     print("Dataset creation completed successfully!")
 

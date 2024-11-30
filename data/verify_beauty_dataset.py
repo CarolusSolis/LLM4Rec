@@ -3,6 +3,8 @@ import scipy.sparse as sp
 import os
 import pickle
 
+FILE_NAME = "beauty_100_users_500_items"
+
 def load_and_check_matrices(path):
     print(f"\nChecking matrices in {path}:")
     matrices = {}
@@ -15,6 +17,15 @@ def load_and_check_matrices(path):
             print(f"Shape: {matrix.shape}")
             print(f"Number of non-zero elements: {matrix.nnz}")
             print(f"Density: {matrix.nnz / (matrix.shape[0] * matrix.shape[1]):.4%}")
+            
+            # Check user interactions
+            user_interactions = np.array(matrix.sum(axis=1)).flatten()
+            users_without_interactions = np.where(user_interactions == 0)[0]
+            if len(users_without_interactions) > 0:
+                print(f"WARNING: Found {len(users_without_interactions)} users with no interactions!")
+                print(f"User indices: {users_without_interactions}")
+            else:
+                print("All users have at least one interaction ")
             
             # Print unique items in each matrix
             unique_items = set(matrix.nonzero()[1])
@@ -77,10 +88,10 @@ def main():
     check_user_item_texts("original/beauty")
 
     # Check reduced dataset
-    print("\n=== Reduced Beauty Dataset (100 users, 100 items) ===")
-    reduced_matrices = load_and_check_matrices("beauty_100_users_100_items")
-    check_item_texts("beauty_100_users_100_items")
-    check_user_item_texts("beauty_100_users_100_items")
+    print("\n=== Reduced Beauty Dataset ===")
+    reduced_matrices = load_and_check_matrices(FILE_NAME)
+    check_item_texts(FILE_NAME)
+    check_user_item_texts(FILE_NAME)
 
     # Verify user activity
     if 'train_matrix.npz' in orig_matrices and reduced_matrices:
