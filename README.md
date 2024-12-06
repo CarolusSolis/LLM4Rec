@@ -357,6 +357,59 @@ Define the finetuning stage of CLLM4Rec.
 ```src/predict.py```:     
 Evaluate the trained model and save the results.
 
+## Directory Structure
+
+```
+LLM4Rec/
+├── data/
+│   ├── beauty_100_users_500_items/
+│   │   ├── meta.pkl
+│   │   ├── train_matrix.npz
+│   │   ├── val_matrix.npz
+│   │   ├── test_matrix.npz
+│   │   ├── item_texts/
+│   │   │   ├── title.pkl
+│   │   │   ├── description.pkl
+│   │   │   ├── brand.pkl
+│   │   │   └── categories.pkl
+│   │   └── user_item_texts/
+│   │       ├── review.pkl
+│   │       └── explain.pkl
+│   ├── beauty_1000_users_1000_items/
+│   │   ├── (similar structure as beauty_100_users_500_items)
+│   ├── verify_beauty_dataset.py
+│   ├── create_small_beauty.py
+│   └── beauty_dataset_analysis.ipynb
+├── src/
+│   └── predict.py
+├── scripts/
+│   └── run.sh
+└── model/
+    ├── beauty_100_users_500_items/
+    │   ├── rec/
+    │   │   ├── item_embeddings_1.pt
+    │   │   ├── user_embeddings_1.pt
+    │   │   └── results_1.txt
+    │   ├── collaborative/
+    │   │   ├── item_embeddings_1.pt
+    │   │   └── user_embeddings_1.pt
+    │   └── content/
+    │       ├── item_embeddings_1.pt
+    │       └── user_embeddings_1.pt
+    ├── beauty_1000_users_1000_items/
+    │   ├── (similar structure as beauty_100_users_500_items)
+    └── pretrained/
+        ├── gpt2/
+        │   └── pytorch_model.bin
+        ├── tokenizer/
+        │   ├── merges.txt
+        │   └── vocab_file.json
+        └── onnx/
+            ├── tokenizer.json
+            ├── vocab.json
+            └── (other model configuration files)
+```
+
 ## 3. Running the Model
 
 ### 3.1. Training and Prediction

@@ -2,7 +2,7 @@
 
 # Configuration
 lambda_V=1
-dataset=beauty_100_users_500_items
+dataset=beauty_1000_users_1000_items
 batch_size=4
 grad_accum_steps=4
 wandb_project="LLM4Rec"
