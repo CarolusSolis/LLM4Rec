@@ -262,9 +262,17 @@ def main():
 
     # IDCG@40 for a single relevant item at position 1
     IDCG = 1.0 / np.log2(2)  # log2(1 + 1) since ranking is 1-based
+    
+    # Create log file
+    log_path = os.path.join(pretrained_root, f"predict_logs_{args.lambda_V}.txt")
+    with fsspec.open(log_path, "w") as f:
+        f.write("Input Prompt\tTop-10 Predicted Items\tTarget Item\tRank of Target\n")
 
     with torch.no_grad():
-        for input_ids, train_mat, target_mat, attention_mask in test_data_loader:
+        for batch_idx, (input_ids, train_mat, target_mat, attention_mask) in enumerate(test_data_loader):
+            # Decode input prompts for logging
+            prompts = tokenizer.batch_decode(input_ids, skip_special_tokens=True)
+            
             # Move tensors to the correct device
             input_ids = input_ids.to(device)
             train_mat = train_mat.to(device)
@@ -291,19 +299,37 @@ def main():
             topk_20_idxes = np.argpartition(-item_scores, 20, axis=1)[:, :20]
             topk_40_idxes = np.argpartition(-item_scores, 40, axis=1)[:, :40]
             
+            # Get top 10 for logging
+            topk_10_idxes = np.argpartition(-item_scores, 10, axis=1)[:, :10]
+            # Sort the top 10 by score
             for i in range(batch_size):
-                target_idx = np.where(target_mat[i] > 0)[0][0]  # Get the single target item index
-                hits_20 += int(target_idx in topk_20_idxes[i])
-                hits_40 += int(target_idx in topk_40_idxes[i])
-                
-                # Calculate NDCG
-                if target_idx in topk_40_idxes[i]:
-                    # Get the rank (1-based)
-                    rank = np.where(topk_40_idxes[i] == target_idx)[0][0] + 1
-                    # Calculate DCG (rel=1 since we have binary relevance)
-                    dcg = 1.0 / np.log2(rank + 1)
-                    # Normalize by IDCG
-                    ndcg_sum += dcg / IDCG
+                topk_10_scores = item_scores[i, topk_10_idxes[i]]
+                sorted_indices = np.argsort(-topk_10_scores)
+                topk_10_idxes[i] = topk_10_idxes[i][sorted_indices]
+            
+            with fsspec.open(log_path, "a") as f:
+                for i in range(batch_size):
+                    target_idx = np.where(target_mat[i] > 0)[0][0]  # Get the single target item index
+                    hits_20 += int(target_idx in topk_20_idxes[i])
+                    hits_40 += int(target_idx in topk_40_idxes[i])
+                    
+                    # Calculate NDCG
+                    rank = -1  # Default if not in top 40
+                    if target_idx in topk_40_idxes[i]:
+                        # Get the rank (1-based)
+                        rank = np.where(topk_40_idxes[i] == target_idx)[0][0] + 1
+                        # Calculate DCG (rel=1 since we have binary relevance)
+                        dcg = 1.0 / np.log2(rank + 1)
+                        # Normalize by IDCG
+                        ndcg_sum += dcg / IDCG
+                    
+                    # Log the results
+                    top_10_items = [f"item_{idx}" for idx in topk_10_idxes[i]]
+                    f.write(f"{prompts[i]}\t{' '.join(top_10_items)}\titem_{target_idx}\t{rank}\n")
+            
+            # Print progress
+            if (batch_idx + 1) % 10 == 0:
+                accelerator.print(f"Processed {batch_idx + 1} batches...")
 
     # Calculate final metrics
     recall_20 = hits_20 / total_queries
