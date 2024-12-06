@@ -9,6 +9,7 @@ import pickle
 
 import torch
 from torch.utils.data import Dataset
+from datasets import load_dataset
 
 
 class CollaborativeGPTGeneratorBatch(Dataset):
@@ -249,6 +250,7 @@ class RecommendationGPTTestGeneratorBatch(Dataset):
                  tokenizer, 
                  train_mat,
                  test_mat,
+                 test_query_dataset="XueyingJia/amazon-search-test",
                  max_length=1024, 
                  predict_ratio=0.2,
                  shuffle=True):
@@ -256,6 +258,8 @@ class RecommendationGPTTestGeneratorBatch(Dataset):
         self.tokenizer = tokenizer
         self.train_mat = train_mat
         self.test_mat = test_mat
+        self.test_query_dataset=test_query_dataset
+        self.test_dataset = load_dataset(self.test_query_dataset)['test']
         self.max_length = max_length
         self.num_users, self.num_items = train_mat.shape
         self.predict_ratio = predict_ratio
@@ -272,7 +276,6 @@ class RecommendationGPTTestGeneratorBatch(Dataset):
         
         # Tokenize the input and create the target matrix
         input_prompt = f"user_{idx} has interacted with {' '.join(['item_' + str(item_id) for item_id in input_interactions])}"
-        input_prompt += f", user_{idx} will interact with"
         
         # Obtain the training items
         train_interactions = self.train_mat.getrow(idx).nonzero()[1]
@@ -283,6 +286,12 @@ class RecommendationGPTTestGeneratorBatch(Dataset):
         target_interactions = self.test_mat.getrow(idx).nonzero()[1]
         target_matrix = torch.zeros(self.num_items, dtype=torch.float32)
         target_matrix[target_interactions] = 1.0
+
+        for item_id in target_interactions:
+            matches = self.test_dataset.filter(lambda x: x['user_id'] == idx and x['item_id'] == item_id)
+            if len(matches) > 0:
+                query = matches[0]['query']
+            input_prompt += f", given query {query}, user_{idx} will interact with"
         
         return input_prompt, train_matrix, target_matrix
 

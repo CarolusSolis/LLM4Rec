@@ -175,7 +175,8 @@ def main():
     # Get the testing data generator
     train_mat = load_npz(local_train_mat_path)
     test_mat = load_npz(local_test_mat_path)
-    test_data_gen = RecommendationGPTTestGeneratorBatch(tokenizer, train_mat, test_mat)
+    test_data_gen = RecommendationGPTTestGeneratorBatch(tokenizer, train_mat, test_mat, test_query_dataset="XueyingJia/amazon-search-test")
+
 
     accelerator.print("Success!")
     accelerator.print("-----End Obtaining the Collaborative Data Generator-----\n")
