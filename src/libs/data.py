@@ -240,6 +240,10 @@ class RecommendationGPTTestGeneratorBatch(Dataset):
             Custom tokenizer instance.
         train_mat (np.ndarray): 
             Matrix of user-item interactions.
+        test_mat (np.ndarray): 
+            Matrix of user-item interactions for testing.
+        test_query_dataset (str, optional): 
+            Name of the test query dataset. Defaults to "XueyingJia/amazon-search-test".
         max_length (int, optional): 
             Maximum length of the encoded sequences. 
             Defaults to 1024.
@@ -258,46 +262,40 @@ class RecommendationGPTTestGeneratorBatch(Dataset):
         self.tokenizer = tokenizer
         self.train_mat = train_mat
         self.test_mat = test_mat
-        self.test_query_dataset=test_query_dataset
+        self.test_query_dataset = test_query_dataset
         self.test_dataset = load_dataset(self.test_query_dataset)['test']
         self.max_length = max_length
         self.num_users, self.num_items = train_mat.shape
         self.predict_ratio = predict_ratio
         self.shuffle = shuffle
+        
+        # Pre-compute all valid user-item-query combinations
+        self.samples = []
+        for user_idx in range(self.num_users):
+            target_interactions = self.test_mat.getrow(user_idx).nonzero()[1]
+            for item_id in target_interactions:
+                matches = self.test_dataset.filter(lambda x: x['user_id'] == user_idx and x['item_id'] == item_id)
+                if len(matches) > 0:
+                    self.samples.append((user_idx, item_id, matches[0]['query']))
 
     def __len__(self):
-        return self.num_users
-    
+        return len(self.samples)
+
     def __getitem__(self, idx):
-        # Get past item interactions for the user
-        input_interactions = self.train_mat.getrow(idx).nonzero()[1]
-        if self.shuffle:
-            random.shuffle(input_interactions)
+        user_idx, item_id, query = self.samples[idx]
         
-        # Tokenize the input and create the target matrix
-        input_prompt = f"user_{idx} has interacted with {' '.join(['item_' + str(item_id) for item_id in input_interactions])}"
-        
-        # Obtain the training items
-        train_interactions = self.train_mat.getrow(idx).nonzero()[1]
+        # Get user's training interactions
+        train_interactions = self.train_mat.getrow(user_idx).nonzero()[1]
         train_matrix = torch.zeros(self.num_items, dtype=torch.float32)
         train_matrix[train_interactions] = 1.0
         
-        # Obtain the val/test items
-        target_interactions = self.test_mat.getrow(idx).nonzero()[1]
+        # Create target matrix with just this specific item
         target_matrix = torch.zeros(self.num_items, dtype=torch.float32)
-        target_matrix[target_interactions] = 1.0
-
-        # Only get query for the first target interaction for simplicity
-        if len(target_interactions) > 0:
-            item_id = target_interactions[0]  # Use the first target interaction
-            matches = self.test_dataset.filter(lambda x: x['user_id'] == idx and x['item_id'] == item_id)
-            if len(matches) > 0:
-                query = matches[0]['query']
-                input_prompt += f", given query {query}, user_{idx} will interact with"
-            else:
-                input_prompt += f", user_{idx} will interact with"
-        else:
-            input_prompt += f", user_{idx} will interact with"
+        target_matrix[item_id] = 1.0
+        
+        # Create input prompt with interaction history
+        input_prompt = f"user_{user_idx} has interacted with {' '.join(['item_' + str(item_id) for item_id in train_interactions])}"
+        input_prompt += f", given query {query}, user_{user_idx} will interact with "
         
         return input_prompt, train_matrix, target_matrix
 

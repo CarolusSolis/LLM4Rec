@@ -253,9 +253,15 @@ def main():
     
     # Set the model to evaluation mode
     rec_model.eval()  
-    cur_recall_20 = 0
-    cur_recall_40 = 0
-    cur_NDCG_100 = 0
+    
+    # Initialize metrics
+    total_queries = 0
+    hits_20 = 0
+    hits_40 = 0
+    ndcg_sum = 0
+
+    # IDCG@40 for a single relevant item at position 1
+    IDCG = 1.0 / np.log2(2)  # log2(1 + 1) since ranking is 1-based
 
     with torch.no_grad():
         for input_ids, train_mat, target_mat, attention_mask in test_data_loader:
@@ -267,33 +273,51 @@ def main():
 
             # Get item scores and rank them
             rec_loss, item_scores = rec_model(input_ids, 
-                                                target_mat, 
-                                                attention_mask)
+                                            target_mat, 
+                                            attention_mask)
             
             # Set score of interacted items to the lowest
             item_scores[train_mat > 0] = -float("inf")  
 
-            # Calculate Recall@K and NDCG@K for each user
+            # Move to CPU for metric calculation
             target_mat = target_mat.cpu().numpy()
             item_scores = item_scores.cpu().numpy()
-            cur_recall_20 += Recall_at_k(target_mat, item_scores, k=20, agg="sum")
-            cur_recall_40 += Recall_at_k(target_mat, item_scores, k=40, agg="sum")
-            cur_NDCG_100 += NDCG_at_k(target_mat, item_scores, k=100, agg="sum")
+            
+            # Update batch size for proper averaging
+            batch_size = target_mat.shape[0]
+            total_queries += batch_size
+            
+            # Calculate top-k indices
+            topk_20_idxes = np.argpartition(-item_scores, 20, axis=1)[:, :20]
+            topk_40_idxes = np.argpartition(-item_scores, 40, axis=1)[:, :40]
+            
+            for i in range(batch_size):
+                target_idx = np.where(target_mat[i] > 0)[0][0]  # Get the single target item index
+                hits_20 += int(target_idx in topk_20_idxes[i])
+                hits_40 += int(target_idx in topk_40_idxes[i])
+                
+                # Calculate NDCG
+                if target_idx in topk_40_idxes[i]:
+                    # Get the rank (1-based)
+                    rank = np.where(topk_40_idxes[i] == target_idx)[0][0] + 1
+                    # Calculate DCG (rel=1 since we have binary relevance)
+                    dcg = 1.0 / np.log2(rank + 1)
+                    # Normalize by IDCG
+                    ndcg_sum += dcg / IDCG
 
-    # Calculate average Recall@K and NDCG@K for the validation set
-    cur_recall_20 /= len(test_data_gen)
-    cur_recall_40 /= len(test_data_gen)
-    cur_NDCG_100 /= len(test_data_gen)
-    
-    accelerator.print(f"Final Testing Results:")
-    accelerator.print(f"Recall@20: {cur_recall_20:.4f}")
-    accelerator.print(f"Recall@40: {cur_recall_40:.4f}")
-    accelerator.print(f"NDCG@100: {cur_NDCG_100:.4f}")
+    # Calculate final metrics
+    recall_20 = hits_20 / total_queries
+    recall_40 = hits_40 / total_queries
+    ndcg_40 = ndcg_sum / total_queries  # This is now properly normalized
+
+    accelerator.print(f"Recall@20: {recall_20:.4f}")
+    accelerator.print(f"Recall@40: {recall_40:.4f}")
+    accelerator.print(f"NDCG@40: {ndcg_40:.4f}")
     
     results_path = os.path.join(pretrained_root, f"results_{args.lambda_V}.txt")
     with fsspec.open(results_path, "w") as f:
-        f.write("Recall@20,Recall@40,NDCG@100\n")
-        f.write(f"{cur_recall_20:.4f},{cur_recall_40:.4f},{cur_NDCG_100:.4f}")
+        f.write("Recall@20,Recall@40,NDCG@40\n")
+        f.write(f"{recall_20:.4f},{recall_40:.4f},{ndcg_40:.4f}")
 
 
 if __name__ == "__main__":
