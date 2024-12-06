@@ -1,9 +1,7 @@
-model/
-data/*
-!data/*.py
-!data/*.ipynb
-!data/*.txt
+/data/original
+data/__MACOSX
 .DS_Store
 tmp/
 __pycache__
 wandb/
+model/pretrained/

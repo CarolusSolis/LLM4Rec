@@ -39,8 +39,8 @@ import shutil
 import pickle
 
 # Constants
-N_USERS = 100
-N_ITEMS = 500
+N_USERS = 1000
+N_ITEMS = 1000
 ORIGINAL_PATH = "original/beauty"
 TARGET_PATH = f"beauty_{N_USERS}_users_{N_ITEMS}_items"
 
