@@ -287,11 +287,17 @@ class RecommendationGPTTestGeneratorBatch(Dataset):
         target_matrix = torch.zeros(self.num_items, dtype=torch.float32)
         target_matrix[target_interactions] = 1.0
 
-        for item_id in target_interactions:
+        # Only get query for the first target interaction for simplicity
+        if len(target_interactions) > 0:
+            item_id = target_interactions[0]  # Use the first target interaction
             matches = self.test_dataset.filter(lambda x: x['user_id'] == idx and x['item_id'] == item_id)
             if len(matches) > 0:
                 query = matches[0]['query']
-            input_prompt += f", given query {query}, user_{idx} will interact with"
+                input_prompt += f", given query {query}, user_{idx} will interact with"
+            else:
+                input_prompt += f", user_{idx} will interact with"
+        else:
+            input_prompt += f", user_{idx} will interact with"
         
         return input_prompt, train_matrix, target_matrix
 
