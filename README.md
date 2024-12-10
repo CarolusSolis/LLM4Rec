@@ -515,7 +515,9 @@ python src/predict.py \
 - `--wandb_name`: Specific name for this training run
 
 Training progress and metrics will be logged to Weights & Biases for easy monitoring.
-
+### Prompt-ablations branch 
+This branch can be run with the below command to explore the different results of the ablations conducted with vaarious prompt styles to explore the user-centric importance. The various prompt_style's are 'basic','content','review','explain'
+python /edrive1/svaddi/LLM4Rec/src/predict.py --dataset beauty_1000_users_1000_items --lambda_V 1 --prompt_style $prompt_style
 ## 🌟 Citation
 If you find this work is helpful to your research, please consider citing our paper:
 ```
